@@ -9,11 +9,12 @@ def _variable(name, shape, initializer):
 
 
 def _weight_initializer():
-    return tf.random_uniform_initializer(minval=-0.05, maxval=0.05, dtype=tf.float32)
+    # return tf.random_uniform_initializer(minval=-0.05, maxval=0.05, dtype=tf.float32)
+    return tf.truncated_normal_initializer(stddev=0.01)
 
 
 def _bias_initializer():
-    return tf.constant_initializer(0.1, dtype=tf.float32)
+    return tf.constant_initializer(0.01)
 
 
 class Layer(object):
@@ -72,11 +73,11 @@ class FCLayer(Layer):
         with tf.variable_scope(self._name):
             w = _variable('weight', [prev.shape[1], self._dim], _weight_initializer())
             b = _variable('bias', [self._dim], _bias_initializer())
+            out = tf.matmul(x, w) + b
+            if self._act is not None:
+                out = self._act(out, name='act')
         self.l2_loss = tf.nn.l2_loss(w)
         self.l1_loss = tf.reduce_sum(tf.abs(w))
-        out = tf.matmul(x, w) + b
-        if self._act is not None:
-            out = self._act(out, name='{}-act'.format(self._name))
         self._shape = out.get_shape().as_list()
         self._params = [w, b]
         return out
@@ -98,13 +99,14 @@ class Conv2DLayer(Layer):
 
     def forward(self, prev, x):
         filter_shape = (self._ksize[0], self._ksize[1], prev.shape[3], self._kernels)
+        strides = (1, self._strides[0], self._strides[1], 1)
         with tf.variable_scope(self._name):
             w = _variable('weight', filter_shape, _weight_initializer())
             b = _variable('bias', [self._kernels], _bias_initializer())
-        out = tf.nn.conv2d(x, w, strides=(1, self._strides[0], self._strides[1], 1), padding=self._padding)
-        out = tf.nn.bias_add(out, b)
-        if self._act:
-            out = self._act(out, name='{}_act'.format(self._name))
+            out = tf.nn.conv2d(x, w, strides=strides, padding=self._padding)
+            out = tf.nn.bias_add(out, b)
+            if self._act:
+                out = self._act(out, name='act')
         self._shape = out.get_shape().as_list()
         self._params = [w, b]
         return out

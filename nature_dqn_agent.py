@@ -16,13 +16,20 @@ class NatureDQNAgent(object):
         self.sess = tf.Session(config=config)
         self.sess.run(tf.global_variables_initializer())
 
-        self.summary_writer = tf.summary.FileWriter('logs', self.sess.graph)
-        self.saver = tf.train.Saver()
         self.step = 0
         self.episode = 0
         self.sum_reward = 0
         self.epsilon = args.initial_exploration
         self.replay_memory = deque(maxlen=self.args.reply_memory_size)
+
+        self.summary_writer = tf.summary.FileWriter('logs', self.sess.graph)
+        self.saver = tf.train.Saver()
+        checkpoint = tf.train.get_checkpoint_state("models")
+        if checkpoint and checkpoint.model_checkpoint_path:
+            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
+            print "model loaded:", checkpoint.model_checkpoint_path
+        else:
+            print "no model found"
 
     def build_graph(self):
         H, W, C = self.args.image_height, self.args.image_width, self.args.agent_history_length
@@ -35,10 +42,10 @@ class NatureDQNAgent(object):
         qvalue = tf.reduce_sum(self.behavior_q * action_one_hot, reduction_indices=1)
         # qvalue = self.behavior_q[:, self.ph_ys]
         self.loss_step = tf.reduce_mean(tf.square(self.ph_ys - qvalue))
-        # opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate,
-        #                                 momentum=self.args.gradient_momentum,
-        #                                 epsilon=self.args.min_squared_gradient)
-        opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate)
+        opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate,
+                                        momentum=self.args.gradient_momentum,
+                                        epsilon=self.args.min_squared_gradient)
+        # opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate)
         self.train_step = opt.minimize(self.loss_step)
 
         self.copy_step = []
@@ -53,9 +60,9 @@ class NatureDQNAgent(object):
         with tf.variable_scope(scope):
             layers = [
                 nnutils.InputLayer(),
-                nnutils.Conv2DLayer('conv1', ksize=(8, 8), kernels=32, strides=(4, 4), padding='SAME', act=tf.nn.relu),
-                nnutils.Conv2DLayer('conv2', ksize=(4, 4), kernels=64, strides=(2, 2), padding='SAME', act=tf.nn.relu),
-                nnutils.Conv2DLayer('conv3', ksize=(3, 3), kernels=64, strides=(1, 1), padding='SAME', act=tf.nn.relu),
+                nnutils.Conv2DLayer('conv1', ksize=(8, 8), kernels=32, strides=(4, 4), padding='VALID', act=tf.nn.relu),
+                nnutils.Conv2DLayer('conv2', ksize=(4, 4), kernels=64, strides=(2, 2), padding='VALID', act=tf.nn.relu),
+                nnutils.Conv2DLayer('conv3', ksize=(3, 3), kernels=64, strides=(1, 1), padding='VALID', act=tf.nn.relu),
                 nnutils.FlattenLayer(),
                 nnutils.FCLayer('fc1', dim=512, act=tf.nn.relu),
                 nnutils.FCLayer('fc2', dim=self.args.num_action, act=None)
@@ -108,7 +115,7 @@ class NatureDQNAgent(object):
                                 terminated=terminated)
         self.replay_memory.append(item)
         if self.step > self.args.replay_start_size and \
-           self.step % self.args.update_frequency == 0:
+           True: # self.step % self.args.update_frequency == 0:
             self.train_q()
         self.current_state = next_state
         self.sum_reward += reward
@@ -119,6 +126,13 @@ class NatureDQNAgent(object):
             self.summary_writer.add_summary(summary, self.episode)
             self.sum_reward = 0
 
+        if self.args.replay_start_size < self.step <= self.args.final_exploration_frame:
+            steps = self.args.final_exploration_frame - self.args.replay_start_size
+            self.epsilon -= (self.args.initial_exploration - self.args.final_exploration) / steps
+
+        if self.step % 50 == 0:
+            print 'step', self.step, 'epsilon', self.epsilon
+
     def get_action(self):
         if random.random() < self.epsilon:
             action = random.randrange(self.args.num_action)
@@ -126,9 +140,6 @@ class NatureDQNAgent(object):
             feed = {self.ph_states: [self.current_state]}
             qvalue = self.sess.run(self.behavior_q, feed_dict=feed)[0]
             action = np.argmax(qvalue)
-        if self.args.final_exploration_frame < self.step <= self.args.replay_start_size:
-            steps = self.args.replay_start_size - self.args.final_exploration_frame
-            self.epsilon -= (self.args.initial_exploration - self.args.final_exploration) / steps
         return action
 
     def init_observe(self, state):
