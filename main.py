@@ -14,7 +14,7 @@ def preprocess(arr):
     img = Image.fromarray(arr)
     img = img.convert('L')
     img = img.resize((84, 84), Image.LANCZOS)
-    return np.asarray(img, dtype=np.int32)
+    return np.asarray(img, dtype=np.uint8)
 
 
 def main(args):

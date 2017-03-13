@@ -46,6 +46,7 @@ class NatureDQNAgent(object):
                                         momentum=self.args.gradient_momentum,
                                         epsilon=self.args.min_squared_gradient)
         # opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate)
+        # opt = tf.train.AdamOptimizer(learning_rate=self.args.learning_rate)
         self.train_step = opt.minimize(self.loss_step)
 
         self.copy_step = []
@@ -115,7 +116,7 @@ class NatureDQNAgent(object):
                                 terminated=terminated)
         self.replay_memory.append(item)
         if self.step > self.args.replay_start_size and \
-           True: # self.step % self.args.update_frequency == 0:
+           self.step % self.args.update_frequency == 0:
             self.train_q()
         self.current_state = next_state
         self.sum_reward += reward
