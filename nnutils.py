@@ -10,11 +10,11 @@ def _variable(name, shape, initializer):
 
 def _weight_initializer():
     # return tf.random_uniform_initializer(minval=-0.05, maxval=0.05, dtype=tf.float32)
-    return tf.truncated_normal_initializer(stddev=0.01)
+    return tf.truncated_normal_initializer(mean=0.0, stddev=0.01)
 
 
 def _bias_initializer():
-    return tf.constant_initializer(0.01)
+    return tf.constant_initializer(0.0)
 
 
 class Layer(object):

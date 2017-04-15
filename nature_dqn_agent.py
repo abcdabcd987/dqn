@@ -1,6 +1,8 @@
+import os
 import random
 import numpy as np
 import tensorflow as tf
+from datetime import datetime
 from collections import deque, namedtuple
 import nnutils
 
@@ -22,7 +24,9 @@ class NatureDQNAgent(object):
         self.epsilon = args.initial_exploration
         self.replay_memory = deque(maxlen=self.args.reply_memory_size)
 
-        self.summary_writer = tf.summary.FileWriter('logs', self.sess.graph)
+        logdir = os.path.join('logs', datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        os.makedirs(logdir)
+        self.summary_writer = tf.summary.FileWriter(logdir, self.sess.graph, flush_secs=2)
         self.saver = tf.train.Saver()
         checkpoint = tf.train.get_checkpoint_state("models")
         if checkpoint and checkpoint.model_checkpoint_path:
@@ -36,25 +40,31 @@ class NatureDQNAgent(object):
         self.ph_states = tf.placeholder(tf.float32, [None, H, W, C], name='states')
         self.ph_action = tf.placeholder(tf.int32, [None], name='action')
         self.ph_ys = tf.placeholder(tf.float32, [None], name='y')
+
+        # network
         self.behavior_q, behavior_params, _, _ = self.build_q_network(self.ph_states, 'q_behavior')
         self.target_q, target_params, _, _ = self.build_q_network(self.ph_states, 'q_target')
-        action_one_hot = tf.one_hot(self.ph_action, self.args.num_action)
-        qvalue = tf.reduce_sum(self.behavior_q * action_one_hot, reduction_indices=1)
-        # qvalue = self.behavior_q[:, self.ph_ys]
-        self.loss_step = tf.reduce_mean(tf.square(self.ph_ys - qvalue))
-        opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate,
-                                        momentum=self.args.gradient_momentum,
-                                        epsilon=self.args.min_squared_gradient)
-        # opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate)
-        # opt = tf.train.AdamOptimizer(learning_rate=self.args.learning_rate)
-        self.train_step = opt.minimize(self.loss_step)
-
         self.copy_step = []
         for name in behavior_params.iterkeys():
             bp, tp = behavior_params[name], target_params[name]
             self.copy_step.append(tp.assign(bp))
 
-        tf.summary.scalar('loss', self.loss_step)
+        # loss
+        action_one_hot = tf.one_hot(self.ph_action, self.args.num_action)
+        qvalue = tf.reduce_sum(self.behavior_q * action_one_hot, reduction_indices=1)
+        delta = self.ph_ys - qvalue
+        clipped_delta = tf.clip_by_value(delta, clip_value_min=-1.0, clip_value_max=1.0)
+        self.loss = tf.reduce_mean(tf.square(clipped_delta))
+
+        # optimizer
+        opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate,
+                                        momentum=self.args.gradient_momentum,
+                                        epsilon=self.args.min_squared_gradient)
+        # opt = tf.train.RMSPropOptimizer(learning_rate=self.args.learning_rate)
+        # opt = tf.train.AdamOptimizer(learning_rate=self.args.learning_rate)
+
+        self.train_op = opt.minimize(self.loss)
+        tf.summary.scalar('loss', self.loss)
         self.summary_step = tf.summary.merge_all()
 
     def build_q_network(self, x, scope):
@@ -75,7 +85,7 @@ class NatureDQNAgent(object):
 
     def copy_network(self):
         self.sess.run(self.copy_step)
-        print 'network copied'
+        print 'step', self.step, 'network copied'
 
     def train_q(self):
         minibatch = random.sample(self.replay_memory, self.args.minibatch_size)
@@ -92,15 +102,15 @@ class NatureDQNAgent(object):
                 y += self.args.discount_factor * np.max(qvalue[i])
             batch_ys.append(y)
 
-        _, loss, summary = self.sess.run([self.train_step, self.loss_step, self.summary_step], feed_dict={
+        _, loss, summary = self.sess.run([self.train_op, self.loss, self.summary_step], feed_dict={
             self.ph_states: batch_states,
             self.ph_action: batch_actions,
             self.ph_ys: batch_ys
         })
-        self.summary_writer.add_summary(summary, self.step)
-
-        if self.step % self.args.target_network_update_frequency == 0:
-            self.copy_network()
+        if self.step % 128 == 0:
+            self.summary_writer.add_summary(summary, self.step)
+            summary = tf.Summary(value=[tf.Summary.Value(tag='epsilon', simple_value=self.epsilon)])
+            self.summary_writer.add_summary(summary, self.step)
 
         if self.step % 10000 == 0:
             self.saver.save(self.sess, 'models/nature-dqn', global_step=self.step)
@@ -115,24 +125,23 @@ class NatureDQNAgent(object):
                                 next_state=next_state,
                                 terminated=terminated)
         self.replay_memory.append(item)
-        if self.step > self.args.replay_start_size and \
-           self.step % self.args.update_frequency == 0:
-            self.train_q()
+        if self.step > self.args.replay_start_size:
+            if self.step % self.args.update_frequency == 0:
+                self.train_q()
+            if self.step % self.args.target_network_update_frequency == 0:
+                self.copy_network()
         self.current_state = next_state
         self.sum_reward += reward
 
         if terminated:
             self.episode += 1
-            summary = tf.Summary(value=[tf.Summary.Value(tag='sum_reward', simple_value=self.sum_reward)])
-            self.summary_writer.add_summary(summary, self.episode)
+            summary = tf.Summary(value=[tf.Summary.Value(tag='episode reward', simple_value=self.sum_reward)])
+            self.summary_writer.add_summary(summary, self.step)
             self.sum_reward = 0
 
         if self.args.replay_start_size < self.step <= self.args.final_exploration_frame:
             steps = self.args.final_exploration_frame - self.args.replay_start_size
             self.epsilon -= (self.args.initial_exploration - self.args.final_exploration) / steps
-
-        if self.step % 50 == 0:
-            print 'step', self.step, 'epsilon', self.epsilon
 
     def get_action(self):
         if random.random() < self.epsilon:

@@ -1,4 +1,5 @@
 import argparse
+import random
 import numpy as np
 from PIL import Image
 from environment import AtariGame
@@ -29,10 +30,13 @@ def main(args):
     while True:
         action = agent.get_action()
         reward = atari.act(action)
+        reward = max(-1.0, min(1.0, reward))
         state = preprocess(atari.get_image())
         terminated = atari.is_game_over()
         if terminated:
             atari.reset()
+            for _ in xrange(random.randrange(args.noop_max)):
+                atari.act(0)
 
         agent.observe(state, action, reward, terminated)
 
